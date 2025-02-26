@@ -1,17 +1,18 @@
 import yfinance as yf
 import streamlit as st
-import datetime
 import pandas as pd
+import datetime
 import plotly.graph_objects as go
 import plotly.express as px
+import talib
 
-# Cache functions
+# Step 1: Load in the neccesary Cache data
 @st.cache_data
 def get_sp500_components():
-    df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+    df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
     df = df[0]
-    tickers = df["Symbol"].to_list()
-    tickers_companies_dict = dict(zip(df["Symbol"], df["Security"]))
+    tickers = df['Symbol']
+    tickers_companies_dict = dict(zip(df['Symbol'], df['Security']))
     return tickers, tickers_companies_dict
 
 @st.cache_data
@@ -22,133 +23,69 @@ def load_data(symbol, start, end):
 
 @st.cache_data
 def convert_df_to_csv(df):
-    return df.to_csv().encode("utf-8")
+    return df.to_csv().encode('utf-8')
 
-# Sidebar
-st.sidebar.header("Stock Parameters")
+# Step 2: Add in Stocks Parameters
+st.sidebar.header('Stock Parameters')
 available_tickers, tickers_companies_dict = get_sp500_components()
-ticker = st.sidebar.selectbox("Ticker", available_tickers, format_func=tickers_companies_dict.get)
-start_date = st.sidebar.date_input("Start date", datetime.date(2019, 1, 1))
-end_date = st.sidebar.date_input("End date", datetime.date.today())
+ticker = st.sidebar.selectbox('Ticker', available_tickers, format_func = tickers_companies_dict.get)
+start_date = st.sidebar.date_input('Start Date', datetime.date(2018, 1, 1))
+end_date = st.sidebar.date_input('End Date', datetime.date.today())
 if start_date > end_date:
-    st.sidebar.error("The end date must fall after the start date")
+    st.sidebar.error('The End Date must fall after the Start Date')
 
-# Technical Analysis Parameters
-st.sidebar.header("Technical Analysis Parameters")
-volume_flag = st.sidebar.checkbox(label="Add volume")
-exp_sma = st.sidebar.expander("SMA")
-sma_flag = exp_sma.checkbox(label="Add SMA")
-sma_periods = exp_sma.number_input(label="SMA Periods", min_value=1, max_value=50, value=20, step=1)
+# Step 3: Technical Analysis Parameters
+st.sidebar.header('Technical Analysis Paramters')
+sma_exp = st.sidebar.expander('SMA')
+sma_flag = sma_exp.checkbox('Enable SMA')
+sma_periods = sma_exp.number_input('SMA Periods', 1, 50)
 
-exp_bb = st.sidebar.expander("Bollinger Bands")
-bb_flag = exp_bb.checkbox(label="Add Bollinger Bands")
-bb_periods = exp_bb.number_input(label="BB Periods", min_value=1, max_value=50, value=20, step=1)
-bb_std = exp_bb.number_input(label="# of standard deviations", min_value=1, max_value=4, value=2, step=1)
+bb_exp = st.sidebar.expander('Bollinger Bands')
+bb_flag = bb_exp.checkbox('Enable Bollinger Bands')
+bb_periods = bb_exp.number_input('BB Periods', 1, 50)
+bb_std = bb_exp.number_input('BB Stanard Deviations', 1, 4)
 
-exp_rsi = st.sidebar.expander("Relative Strength Index")
-rsi_flag = exp_rsi.checkbox(label="Add RSI")
-rsi_periods = exp_rsi.number_input(label="RSI Periods", min_value=1, max_value=50, value=20, step=1)
-rsi_upper = exp_rsi.number_input(label="RSI Upper", min_value=50, max_value=90, value=70, step=1)
-rsi_lower = exp_rsi.number_input(label="RSI Lower", min_value=10, max_value=50, value=30, step=1)
+rsi_exp = st.sidebar.expander('Relative Strength Index')
+rsi_flag = rsi_exp.checkbox('Enable Relative Strength Index')
+rsi_periods = rsi_exp.number_input('RSI Periods', 1, 20)
+rsi_upper = rsi_exp.number_input('RSI Upper', 50, 90)  
+rsi_lower = rsi_exp.number_input('RSI Lower', 10, 50)                           
 
-# Title
-st.title("A simple web app for technical analysis")
+# Step 4: The Content
+st.title('Technical Analysis of Companies listed in S&P 500')
 st.write("""
 ### User manual
-* You can select any company from the S&P 500 constituents
+* You can Select any single Company from the S&P 500
+* Stock prices is updated daily
+* 3 Technical Indicators are Available
+* You are able to download the data from Yahoo into a CSV file         
 """)
 
-# Load stock data
 df = load_data(ticker, start_date, end_date)
+df_exp = st.expander('Preview Data')
+available_cols = df.columns.to_list()
+columns_to_show = df_exp.multiselect('Columns', available_cols, default = available_cols)
+df_exp.dataframe(df[columns_to_show])
+df_exp.download_button("Download selected as CSV", 
+                       data = csv_file, 
+                       file_name = f'{ticker} Daily Stock Prices',
+                       mime = 'text/csv')
 
-# Preview Data
-data_exp = st.expander("Preview data")
-available_cols = df.columns.tolist()
-columns_to_show = data_exp.multiselect("Columns", available_cols, default=available_cols)
-data_exp.dataframe(df[columns_to_show])
-csv_file = convert_df_to_csv(df[columns_to_show])
-data_exp.download_button(
-    label="Download selected as CSV",
-    data=csv_file,
-    file_name=f"{ticker}_stock_prices.csv",
-    mime="text/csv",
-)
-
-# Debugging: Check if data is loaded correctly
-st.write(f"Data loaded for {ticker}:")
-st.write(df.head())
-
-# Ensure that the index is a DatetimeIndex
-if not isinstance(df.index, pd.DatetimeIndex):
-    st.error("The data index is not a DatetimeIndex, which is required for time series plotting.")
-else:
-    st.write(f"Index is a {type(df.index)}")
-
-# Plotting the data using plotly
-title_str = f"{tickers_companies_dict[ticker]}'s stock price"
-
-# Create the figure
+# Step 5: The plotting
 fig = go.Figure()
 
-# Check if data has valid values
 if df.empty:
-    st.error("No data available for the selected stock symbol and date range.")
+    st.error('No Data Available for the Selected Stock and Date range')
 else:
-    # Candlestick trace (Open, High, Low, Close)
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df['Open'],
-        high=df['High'],
-        low=df['Low'],
-        close=df['Close'],
-        name="Price"
-    ))
+    # Candlestick Trace
+    fig.add_trace(go.Candlestick(open = df['Open'],
+                                 close = df['Close'],
+                                 high = df['High'],
+                                 low = df['Low'],
+                                 name = 'Price'))
 
-    # Volume trace (if enabled)
-    if volume_flag:
-        fig.add_trace(go.Bar(
-            x=df.index,
-            y=df['Volume'],
-            name="Volume",
-            marker_color='rgba(255, 153, 51, 0.6)'
-        ))
-
-    # Add SMA (if selected)
-    if sma_flag:
-        sma = df['Close'].rolling(window=sma_periods).mean()
-        fig.add_trace(go.Scatter(
-            x=df.index,
-            y=sma,
-            mode='lines',
-            name=f"SMA {sma_periods}",
-            line=dict(color='blue')
-        ))
-
-    # Add Bollinger Bands (if selected)
-    if bb_flag:
-        rolling_mean = df['Close'].rolling(window=bb_periods).mean()
-        rolling_std = df['Close'].rolling(window=bb_periods).std()
-        upper_band = rolling_mean + bb_std * rolling_std
-        lower_band = rolling_mean - bb_std * rolling_std
-
-        fig.add_trace(go.Scatter(
-            x=df.index,
-            y=upper_band,
-            mode='lines',
-            name="Upper Bollinger Band",
-            line=dict(color='red', dash='dash')
-        ))
-        fig.add_trace(go.Scatter(
-            x=df.index,
-            y=lower_band,
-            mode='lines',
-            name="Lower Bollinger Band",
-            line=dict(color='red', dash='dash')
-        ))
-
-    # Add RSI (if selected)
     if rsi_flag:
-        rsi = 100 - (100 / (1 + (df['Close'].pct_change().dropna() + 1).rolling(window=rsi_periods).mean()))
+        rsi = talib.RSI(df['Close'], timeperiod = rsi_periods)
         fig.add_trace(go.Scatter(
             x=df.index,
             y=rsi,
@@ -160,16 +97,18 @@ else:
         fig.add_hline(y=rsi_lower, line=dict(color='red', dash='dot'))
 
     # Update layout
+    title_str = f"{tickers_companies_dict[ticker]}'s Stock Price"
     config = {'scrollZoom': True}
     fig.update_layout(
         title=title_str,
         xaxis_title="Date",
         yaxis_title="Price",
         template="plotly_dark",
-        xaxis_rangeslider_visible=False,
+        xaxis_rangeslider_visible = True,
         dragmode = 'pan'
     )
     fig.show(config = config)
 
     # Display plot
     st.plotly_chart(fig)
+    
